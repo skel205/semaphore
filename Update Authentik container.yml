@@ -1,13 +1,13 @@
-- name: Update Authentik container
+- name: Update Authentik server
   hosts: all
   become: yes
   tasks:
-    - name: Pull latest Authentik image
-      ansible.builtin.shell: docker compose pull
+    - name: Pull latest Authentik images
+      ansible.builtin.shell: docker-compose pull
       args:
-        chdir: /opt/authentik
+        chdir: /home/authentik/docker/authentik/install
 
-    - name: Recreate Authentik container with new image
-      ansible.builtin.shell: docker compose up -d
+    - name: Recreate Authentik containers with the latest images
+      ansible.builtin.shell: docker-compose up -d
       args:
-        chdir: /opt/authentik
+        chdir: /home/authentik/docker/authentik/install
