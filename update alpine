@@ -1,0 +1,31 @@
+- name: Update Alpine server
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Update apk package index
+      ansible.builtin.shell: |
+        apk update
+      register: apk_update
+      changed_when: "'fetch' in apk_update.stdout"
+
+    - name: List upgradable packages (before upgrade)
+      ansible.builtin.shell: |
+        apk list -u
+      register: upgradable_before
+      changed_when: false
+      failed_when: false
+
+    - name: Show upgradable packages (before)
+      ansible.builtin.debug:
+        msg: "{{ upgradable_before.stdout_lines | default(['No packages upgradable']) }}"
+
+    - name: Upgrade all packages and show what's updated
+      ansible.builtin.shell: |
+        apk upgrade --available
+      register: upgrade_output
+      changed_when: "'Upgraded' in upgrade_output.stdout or 'installed' in upgrade_output.stdout"
+
+    - name: Show upgraded packages
+      ansible.builtin.debug:
+        msg: "{{ upgrade_output.stdout_lines }}"
