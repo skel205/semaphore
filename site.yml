@@ -1,8 +1,15 @@
 ---
-- name: Test Connection
+- name: Update Ubuntu server
   hosts: servers
-  become: false
-  tasks:
-    - name: Ping the target server
-      ansible.builtin.ping:
+  become: yes  # Use sudo to gain elevated privileges
 
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600  # Only update if cache is older than 1 hour
+
+    - name: Upgrade all packages to latest
+      apt:
+        upgrade: dist
+        autoremove: yes
