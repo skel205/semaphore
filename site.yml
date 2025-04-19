@@ -1,15 +1,13 @@
----
-- name: Update Ubuntu server
-  hosts: servers
-  become: yes  # Use sudo to gain elevated privileges
+- name: List upgradable packages (before upgrade)
+  ansible.builtin.shell: apt list --upgradable
+  register: upgradable_before
+  changed_when: false
 
-  tasks:
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600  # Only update if cache is older than 1 hour
+- name: Show upgradable packages
+  ansible.builtin.debug:
+    var: upgradable_before.stdout_lines
 
-    - name: Upgrade all packages to latest
-      apt:
-        upgrade: dist
-        autoremove: yes
+- name: Upgrade all packages to latest
+  ansible.builtin.apt:
+    upgrade: dist
+    update_cache: yes
