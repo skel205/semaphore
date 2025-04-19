@@ -3,15 +3,21 @@
   become: yes
   tasks:
     - name: List upgradable packages (before upgrade)
-      ansible.builtin.shell: apt list --upgradable
+      ansible.builtin.shell: |
+        apt list --upgradable 2>/dev/null | grep -v "Listing..."
       register: upgradable_before
       changed_when: false
 
-    - name: Show upgradable packages
+    - name: Show upgradable packages (before)
       ansible.builtin.debug:
         var: upgradable_before.stdout_lines
 
-    - name: Upgrade all packages to latest
-      ansible.builtin.apt:
-        upgrade: dist
-        update_cache: yes
+    - name: Upgrade all packages and show what's updated
+      ansible.builtin.shell: |
+        DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade | tee /tmp/apt-upgrade.log
+      register: upgrade_output
+      changed_when: "'0 upgraded, 0 newly installed' not in upgrade_output.stdout"
+
+    - name: Show upgraded packages
+      ansible.builtin.debug:
+        var: upgrade_output.stdout_lines
