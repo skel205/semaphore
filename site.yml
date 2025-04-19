@@ -7,6 +7,7 @@
         apt list --upgradable 2>/dev/null | grep -v "Listing..."
       register: upgradable_before
       changed_when: false
+      failed_when: false   # <--- this line fixes your error
 
     - name: Show upgradable packages (before)
       ansible.builtin.debug:
