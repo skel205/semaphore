@@ -1,0 +1,13 @@
+- name: Update Authentik container
+  hosts: all
+  become: yes
+  tasks:
+    - name: Pull latest Authentik image
+      ansible.builtin.shell: docker compose pull
+      args:
+        chdir: /opt/authentik
+
+    - name: Recreate Authentik container with new image
+      ansible.builtin.shell: docker compose up -d
+      args:
+        chdir: /opt/authentik
