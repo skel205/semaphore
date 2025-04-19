@@ -1,13 +1,17 @@
-- name: List upgradable packages (before upgrade)
-  ansible.builtin.shell: apt list --upgradable
-  register: upgradable_before
-  changed_when: false
+- name: Update Ubuntu server
+  hosts: all
+  become: yes
+  tasks:
+    - name: List upgradable packages (before upgrade)
+      ansible.builtin.shell: apt list --upgradable
+      register: upgradable_before
+      changed_when: false
 
-- name: Show upgradable packages
-  ansible.builtin.debug:
-    var: upgradable_before.stdout_lines
+    - name: Show upgradable packages
+      ansible.builtin.debug:
+        var: upgradable_before.stdout_lines
 
-- name: Upgrade all packages to latest
-  ansible.builtin.apt:
-    upgrade: dist
-    update_cache: yes
+    - name: Upgrade all packages to latest
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: yes
