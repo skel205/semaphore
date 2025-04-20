@@ -30,7 +30,7 @@
         msg: "{{ upgrade_output.stdout_lines }}"
 
     - name: Pull latest Docker images
-      ansible.builtin.command: docker compose pull
+      ansible.builtin.command: docker-compose pull
       args:
         chdir: "{{ compose_dir }}"
       register: pull_result
@@ -40,7 +40,7 @@
         msg: "{{ pull_result.stdout_lines }}"
 
     - name: Recreate containers with updated images
-      ansible.builtin.command: docker compose up -d
+      ansible.builtin.command: docker-compose up -d
       args:
         chdir: "{{ compose_dir }}"
       register: up_result
