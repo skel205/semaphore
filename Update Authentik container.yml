@@ -30,21 +30,23 @@
         msg: "{{ upgrade_output.stdout_lines }}"
 
     - name: Pull latest Docker images
-      ansible.builtin.command: docker-compose pull
+      ansible.builtin.shell: docker-compose pull
       args:
         chdir: "{{ compose_dir }}"
       register: pull_result
+      changed_when: "'Pulling' in pull_result.stdout or 'Downloaded' in pull_result.stdout"
 
     - name: Show pulled image results
       ansible.builtin.debug:
-        msg: "{{ pull_result.stdout_lines }}"
+        msg: "{{ pull_result.stdout_lines | default(['No new images pulled']) }}"
 
     - name: Recreate containers with updated images
-      ansible.builtin.command: docker-compose up -d
+      ansible.builtin.shell: docker-compose up -d
       args:
         chdir: "{{ compose_dir }}"
       register: up_result
+      changed_when: "'Creating' in up_result.stdout or 'Recreating' in up_result.stdout"
 
     - name: Show which services were recreated
       ansible.builtin.debug:
-        msg: "{{ up_result.stdout_lines }}"
+        msg: "{{ up_result.stdout_lines | default(['No containers were recreated']) }}"
