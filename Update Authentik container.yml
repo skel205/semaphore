@@ -1,13 +1,50 @@
-- name: Update Authentik server
+- name: Update Alpine and Authentik Docker Stack
   hosts: all
   become: yes
-  tasks:
-    - name: Pull latest Authentik images
-      ansible.builtin.shell: docker-compose pull
-      args:
-        chdir: /home/authentik/docker/authentik/install
+  vars:
+    compose_dir: /home/authentik/docker/authentik/install
 
-    - name: Recreate Authentik containers with the latest images
-      ansible.builtin.shell: docker-compose up -d
+  tasks:
+    - name: Update apk package index
+      ansible.builtin.shell: apk update
+      register: apk_update
+      changed_when: "'fetch' in apk_update.stdout"
+
+    - name: List upgradable packages (before upgrade)
+      ansible.builtin.shell: apk list -u
+      register: upgradable_before
+      changed_when: false
+      failed_when: false
+
+    - name: Show upgradable packages (before)
+      ansible.builtin.debug:
+        msg: "{{ upgradable_before.stdout_lines | default(['No packages upgradable']) }}"
+
+    - name: Upgrade all packages
+      ansible.builtin.shell: apk upgrade --available
+      register: upgrade_output
+      changed_when: "'Upgraded' in upgrade_output.stdout or 'installed' in upgrade_output.stdout"
+
+    - name: Show upgraded packages
+      ansible.builtin.debug:
+        msg: "{{ upgrade_output.stdout_lines }}"
+
+    - name: Pull latest Docker images
+      ansible.builtin.command: docker compose pull
       args:
-        chdir: /home/authentik/docker/authentik/install
+        chdir: "{{ compose_dir }}"
+      register: pull_result
+
+    - name: Show pulled image results
+      ansible.builtin.debug:
+        msg: "{{ pull_result.stdout_lines }}"
+
+    - name: Recreate containers with updated images
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ compose_dir }}"
+      register: up_result
+
+    - name: Show which services were recreated
+      ansible.builtin.debug:
+        msg: "{{ up_result.stdout_lines }}"
