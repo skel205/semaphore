@@ -4,10 +4,13 @@
   become: true
   gather_facts: true
 
+  vars:
+    ansible_ssh_timeout: 120
+
   tasks:
 
     # --------------------------------------------
-    # Detect package manager (clean output)
+    # Detect package manager (safe + clean)
     # --------------------------------------------
     - name: Detect package manager
       ansible.builtin.raw: |
@@ -21,24 +24,25 @@
       set_fact:
         pkg: "{{ pkg_mgr.stdout | trim }}"
 
-    - name: Debug package manager (safe)
+    - name: Debug package manager
       debug:
         msg: "Detected package manager = {{ pkg }}"
 
     # --------------------------------------------
-    # Fail safely
+    # Fail safely if unsupported
     # --------------------------------------------
     - name: Fail if unsupported OS
       fail:
         msg: "Unsupported OS (no apt or apk detected)"
-      when: pkg != "apt" and pkg != "apk"
+      when: pkg not in ['apt', 'apk']
 
-    # --------------------------------------------
-    # Debian / Ubuntu ONLY
-    # --------------------------------------------
-    - name: Debian/Ubuntu update
+    # ============================================
+    # DEBIAN / UBUNTU PATH
+    # ============================================
+    - name: Debian/Ubuntu update block
       when: pkg == "apt"
       block:
+
         - name: Update apt cache
           apt:
             update_cache: yes
@@ -49,14 +53,17 @@
             autoremove: yes
             purge: yes
 
-    # --------------------------------------------
-    # Alpine ONLY (safe execution block)
-    # --------------------------------------------
-    - name: Alpine update
+    # ============================================
+    # ALPINE PATH (FIXED FOR SSH DROP ISSUE)
+    # ============================================
+    - name: Alpine update block (safe execution)
       when: pkg == "apk"
       block:
+
         - name: Update Alpine packages
           raw: apk update
 
-        - name: Upgrade Alpine packages
-          raw: apk upgrade
+        # FIX: prevents SSH drop during long upgrades
+        - name: Upgrade Alpine packages (stable)
+          raw: |
+            nohup sh -c "apk upgrade" >/tmp/apk-upgrade.log 2>&1 &
