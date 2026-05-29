@@ -1,54 +1,14 @@
 ---
-# ====================================================
-# PROXMOX SNAPSHOT + RETENTION
-# ====================================================
-- name: Proxmox snapshot + retention
-  hosts: proxmox
-  become: true
-
-  vars:
-    vmid: 125
-    keep_snapshots: 5
-    snapshot_prefix: "pre-update"
-
-  tasks:
-
-    - name: Create snapshot
-      command: >
-        qm snapshot {{ vmid }}
-        {{ snapshot_prefix }}-{{ ansible_date_time.date }}-{{ ansible_date_time.time | replace(':','-') }}
-
-    - name: Get snapshot list
-      command: qm listsnapshot {{ vmid }}
-      register: snap_list
-      changed_when: false
-
-    - name: Extract snapshot names safely
-      set_fact:
-        snapshots: >-
-          {{
-            snap_list.stdout_lines
-            | select('match', '^[a-zA-Z0-9]')
-            | map('regex_replace', '\s+.*$', '')
-            | reject('equalto', 'current')
-            | list
-          }}
-
-    - name: Delete old snapshots (keep last N)
-      command: qm delsnapshot {{ vmid }} {{ item }}
-      loop: "{{ snapshots[:-keep_snapshots] if snapshots|length > keep_snapshots else [] }}"
-
-
-# ====================================================
-# UNIVERSAL LINUX UPDATE (Ubuntu / Debian / Alpine)
-# ====================================================
-- name: Update Linux VMs (Ubuntu / Debian / Alpine)
+- name: Universal Linux update (safe)
   hosts: ubuntu_vms
   become: true
   gather_facts: true
 
   tasks:
 
+    # --------------------------------------------
+    # Detect OS type once
+    # --------------------------------------------
     - name: Detect package manager
       ansible.builtin.raw: |
         if command -v apt-get >/dev/null 2>&1; then echo apt;
@@ -57,27 +17,34 @@
       register: pkg_mgr
       changed_when: false
 
+    - name: Set package manager fact
+      set_fact:
+        pkg: "{{ pkg_mgr.stdout | trim }}"
+
+    # --------------------------------------------
+    # Fail safely
+    # --------------------------------------------
     - name: Fail if unsupported OS
       fail:
         msg: "Unsupported OS - no apt or apk found"
-      when: "'unknown' in pkg_mgr.stdout"
+      when: pkg == "unknown"
 
-    # ----------------------------
-    # Debian / Ubuntu
-    # ----------------------------
+    # --------------------------------------------
+    # Debian / Ubuntu ONLY
+    # --------------------------------------------
     - name: Update Debian/Ubuntu systems
-      when: "'apt' in pkg_mgr.stdout"
+      when: pkg == "apt"
       apt:
         update_cache: yes
         upgrade: dist
         autoremove: yes
         purge: yes
 
-    # ----------------------------
-    # Alpine Linux
-    # ----------------------------
+    # --------------------------------------------
+    # Alpine ONLY
+    # --------------------------------------------
     - name: Update Alpine systems
-      when: "'apk' in pkg_mgr.stdout"
+      when: pkg == "apk"
       raw: |
         apk update
         apk upgrade
