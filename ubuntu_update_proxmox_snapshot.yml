@@ -50,7 +50,7 @@
 #########################################################
 
 - name: Universal Linux update (production safe)
-  hosts: ubuntu_vms
+  hosts: vms
   become: true
   gather_facts: true
   serial: 1
