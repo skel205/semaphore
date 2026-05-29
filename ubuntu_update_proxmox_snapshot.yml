@@ -1,0 +1,65 @@
+---
+- name: Update Ubuntu VM + Proxmox snapshot with retention
+  hosts: proxmox
+  become: true
+
+  vars:
+    vmid: 125
+    keep_snapshots: 5
+    snapshot_prefix: "pre-update"
+
+  tasks:
+
+    # ----------------------------------------------------
+    # 1. CREATE SNAPSHOT
+    # ----------------------------------------------------
+    - name: Create Proxmox snapshot
+      command: >
+        qm snapshot {{ vmid }}
+        {{ snapshot_prefix }}-{{ ansible_date_time.iso8601_basic }}
+      register: snapshot_result
+
+    # ----------------------------------------------------
+    # 2. GET SNAPSHOTS LIST
+    # ----------------------------------------------------
+    - name: Get snapshot list
+      command: qm listsnapshot {{ vmid }}
+      register: snap_list
+
+    # ----------------------------------------------------
+    # 3. PARSE SNAPSHOT NAMES
+    # ----------------------------------------------------
+    - name: Extract snapshot names
+      set_fact:
+        snapshots: >-
+          {{
+            snap_list.stdout_lines
+            | select('match', '^[a-zA-Z0-9]')
+            | map('regex_replace', '\s+.*$', '')
+            | reject('equalto', 'current')
+            | list
+          }}
+
+    # ----------------------------------------------------
+    # 4. DETERMINE SNAPSHOTS TO DELETE
+    # ----------------------------------------------------
+    - name: Calculate snapshots to delete
+      set_fact:
+        snapshots_to_delete: "{{ snapshots[:-keep_snapshots] if snapshots|length > keep_snapshots else [] }}"
+
+    # ----------------------------------------------------
+    # 5. DELETE OLD SNAPSHOTS
+    # ----------------------------------------------------
+    - name: Remove old snapshots (keep last N)
+      command: qm delsnapshot {{ vmid }} {{ item }}
+      loop: "{{ snapshots_to_delete }}"
+
+    # ----------------------------------------------------
+    # 6. UPDATE UBUNTU INSIDE VM (via SSH)
+    # ----------------------------------------------------
+    - name: Update Ubuntu packages
+      delegate_to: "{{ inventory_hostname }}"
+      shell: |
+        apt update
+        DEBIAN_FRONTEND=noninteractive apt -y upgrade
+        apt -y autoremove --purge
