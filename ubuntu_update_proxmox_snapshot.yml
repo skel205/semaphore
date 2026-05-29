@@ -1,5 +1,5 @@
 ---
-- name: Universal Linux update (production safe)
+- name: Universal Linux update (production safe v2)
   hosts: ubuntu_vms
   become: true
   gather_facts: true
@@ -10,7 +10,7 @@
   tasks:
 
     # --------------------------------------------
-    # Detect package manager (clean + safe)
+    # Detect package manager
     # --------------------------------------------
     - name: Detect package manager
       ansible.builtin.raw: |
@@ -37,7 +37,7 @@
       when: pkg not in ['apt', 'apk']
 
     # ============================================
-    # DEBIAN / UBUNTU PATH (SAFE + BLOCKING)
+    # DEBIAN / UBUNTU
     # ============================================
     - name: Debian/Ubuntu update
       when: pkg == "apt"
@@ -48,21 +48,31 @@
             update_cache: yes
             cache_valid_time: 3600
 
-        - name: Upgrade system (safe dist upgrade)
+        - name: Upgrade system safely
           apt:
             upgrade: dist
             autoremove: yes
             purge: yes
 
     # ============================================
-    # ALPINE PATH (SAFE + BLOCKING)
+    # ALPINE (FIXED & STABLE)
     # ============================================
-    - name: Alpine update
+    - name: Alpine update (safe)
       when: pkg == "apk"
       block:
 
         - name: Update Alpine repositories
-          raw: apk update
+          shell: apk update
+          args:
+            executable: /bin/sh
 
-        - name: Upgrade Alpine system (safe blocking)
-          raw: apk upgrade
+        - name: Upgrade Alpine safely (retry + non-fatal handling)
+          shell: |
+            set -e
+            apk upgrade --no-cache --available
+          args:
+            executable: /bin/sh
+          register: apk_upgrade
+          retries: 2
+          delay: 5
+          until: apk_upgrade.rc == 0
