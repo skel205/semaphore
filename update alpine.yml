@@ -1,6 +1,6 @@
 ---
 - name: Universal Linux update (production safe v3)
-  hosts: ubuntu_vms
+  hosts: vms
   become: true
   gather_facts: true
 
