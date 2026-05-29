@@ -1,6 +1,6 @@
 ---
 - name: Update Ubuntu VM + Proxmox snapshot with retention
-  hosts: proxmox
+  hosts: servers
   become: true
 
   vars:
@@ -16,7 +16,7 @@
     - name: Create Proxmox snapshot
       command: >
         qm snapshot {{ vmid }}
-        {{ snapshot_prefix }}-{{ ansible_date_time.iso8601_basic }}
+        {{ snapshot_prefix }}-{{ ansible_date_time.date }}-{{ ansible_date_time.time | replace(':','-') }}
       register: snapshot_result
 
     # ----------------------------------------------------
@@ -27,9 +27,9 @@
       register: snap_list
 
     # ----------------------------------------------------
-    # 3. PARSE SNAPSHOT NAMES
+    # 3. EXTRACT SNAPSHOT NAMES SAFELY
     # ----------------------------------------------------
-    - name: Extract snapshot names
+    - name: Parse snapshot names
       set_fact:
         snapshots: >-
           {{
@@ -57,8 +57,9 @@
     # ----------------------------------------------------
     # 6. UPDATE UBUNTU INSIDE VM (via SSH)
     # ----------------------------------------------------
-    - name: Update Ubuntu packages
-      delegate_to: "{{ inventory_hostname }}"
+    - name: Update Ubuntu packages inside VM
+      delegate_to: "{{ vmid }}"
+      become: true
       shell: |
         apt update
         DEBIAN_FRONTEND=noninteractive apt -y upgrade
