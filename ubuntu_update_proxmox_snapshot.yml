@@ -1,6 +1,9 @@
 ---
-- name: Update Ubuntu VM + Proxmox snapshot with retention
-  hosts: servers
+# ====================================================
+# PROXMOX SNAPSHOT TASKS
+# ====================================================
+- name: Create Proxmox snapshot + retention
+  hosts: proxmox
   become: true
 
   vars:
@@ -10,26 +13,16 @@
 
   tasks:
 
-    # ----------------------------------------------------
-    # 1. CREATE SNAPSHOT
-    # ----------------------------------------------------
-    - name: Create Proxmox snapshot
+    - name: Create snapshot
       command: >
         qm snapshot {{ vmid }}
         {{ snapshot_prefix }}-{{ ansible_date_time.date }}-{{ ansible_date_time.time | replace(':','-') }}
-      register: snapshot_result
 
-    # ----------------------------------------------------
-    # 2. GET SNAPSHOTS LIST
-    # ----------------------------------------------------
-    - name: Get snapshot list
+    - name: Get snapshots
       command: qm listsnapshot {{ vmid }}
       register: snap_list
 
-    # ----------------------------------------------------
-    # 3. EXTRACT SNAPSHOT NAMES SAFELY
-    # ----------------------------------------------------
-    - name: Parse snapshot names
+    - name: Parse snapshots
       set_fact:
         snapshots: >-
           {{
@@ -40,27 +33,29 @@
             | list
           }}
 
-    # ----------------------------------------------------
-    # 4. DETERMINE SNAPSHOTS TO DELETE
-    # ----------------------------------------------------
-    - name: Calculate snapshots to delete
-      set_fact:
-        snapshots_to_delete: "{{ snapshots[:-keep_snapshots] if snapshots|length > keep_snapshots else [] }}"
-
-    # ----------------------------------------------------
-    # 5. DELETE OLD SNAPSHOTS
-    # ----------------------------------------------------
-    - name: Remove old snapshots (keep last N)
+    - name: Delete old snapshots
       command: qm delsnapshot {{ vmid }} {{ item }}
-      loop: "{{ snapshots_to_delete }}"
+      loop: "{{ snapshots[:-keep_snapshots] if snapshots|length > keep_snapshots else [] }}"
 
-    # ----------------------------------------------------
-    # 6. UPDATE UBUNTU INSIDE VM (via SSH)
-    # ----------------------------------------------------
-    - name: Update Ubuntu packages inside VM
-      delegate_to: "{{ vmid }}"
-      become: true
-      shell: |
-        apt update
-        DEBIAN_FRONTEND=noninteractive apt -y upgrade
-        apt -y autoremove --purge
+
+# ====================================================
+# UBUNTU UPDATE TASKS
+# ====================================================
+- name: Update Ubuntu VMs
+  hosts: ubuntu_vms
+  become: true
+
+  tasks:
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Upgrade system
+      apt:
+        upgrade: dist
+
+    - name: Cleanup
+      apt:
+        autoremove: yes
+        purge: yes
