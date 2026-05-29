@@ -1,33 +1,97 @@
-- name: Update Alpine server (manual-style output)
-  hosts: all
-  become: yes
+---
+- name: Universal Linux update (production safe v3)
+  hosts: ubuntu_vms
+  become: true
+  gather_facts: true
+
+  vars:
+    alpine_allow_upgrade: false   # 🚨 IMPORTANT: set true only if system is clean (non-broken apk/glibc)
+    retry_count: 2
 
   tasks:
-    - name: Update apk package index
-      ansible.builtin.command: apk update
-      register: apk_update
-      changed_when: false
 
-    - name: Show apk update output
-      ansible.builtin.debug:
-        msg: "{{ apk_update.stdout_lines }}"
+  # ----------------------------------------------------
+  # Detect OS / package manager safely
+  # ----------------------------------------------------
+  - name: Detect package manager
+    ansible.builtin.raw: |
+      if command -v apt-get >/dev/null 2>&1; then echo apt;
+      elif command -v apk >/dev/null 2>&1; then echo apk;
+      else echo unknown; fi
+    register: pkg_mgr
+    changed_when: false
 
-    - name: List upgradable packages
-      ansible.builtin.command: apk list -u
-      register: upgradable
-      changed_when: false
-      failed_when: false
+  - name: Normalize package manager
+    set_fact:
+      pkg: "{{ pkg_mgr.stdout | trim }}"
 
-    - name: Show upgradable packages
-      ansible.builtin.debug:
-        msg: "{{ upgradable.stdout_lines | default(['No upgradable packages']) }}"
+  - name: Show detected OS type
+    debug:
+      msg: "Package manager detected: {{ pkg }}"
 
-    - name: Run full upgrade (manual output)
-      ansible.builtin.command: apk upgrade --available
-      register: upgrade
-      changed_when: false
-      failed_when: false   # IMPORTANT: don't hide output, don't fail on rc=1
+  - name: Fail if unsupported OS
+    fail:
+      msg: "Unsupported OS (no apt or apk detected)"
+    when: pkg not in ["apt", "apk"]
 
-    - name: Show upgrade output (raw)
-      ansible.builtin.debug:
-        msg: "{{ upgrade.stdout_lines }}"
+  # ----------------------------------------------------
+  # DEBIAN / UBUNTU
+  # ----------------------------------------------------
+  - name: Debian/Ubuntu update block
+    when: pkg == "apt"
+    block:
+
+      - name: Update apt cache
+        apt:
+          update_cache: yes
+          cache_valid_time: 3600
+
+      - name: Upgrade system safely
+        apt:
+          upgrade: dist
+          autoremove: yes
+          purge: yes
+
+  # ----------------------------------------------------
+  # ALPINE (Docker-safe hardened mode)
+  # ----------------------------------------------------
+  - name: Alpine update block
+    when: pkg == "apk"
+    block:
+
+      - name: Check for glibc conflict (Docker-safe guard)
+        ansible.builtin.raw: |
+          if apk info | grep -q glibc; then echo "glibc_detected"; else echo "clean"; fi
+        register: glibc_check
+        changed_when: false
+
+      - name: Show Alpine state
+        debug:
+          msg: "Alpine state = {{ glibc_check.stdout | trim }}"
+
+      - name: Skip unsafe upgrades if glibc conflict exists
+        debug:
+          msg: "⚠️ Skipping apk upgrade due to glibc conflict (Docker image corruption risk)"
+        when:
+          - glibc_check.stdout is search("glibc_detected")
+          - not alpine_allow_upgrade | bool
+
+      - name: Update Alpine repositories
+        ansible.builtin.raw: apk update
+        when:
+          - glibc_check.stdout is not search("glibc_detected") or alpine_allow_upgrade | bool
+
+      - name: Upgrade Alpine packages (safe)
+        ansible.builtin.raw: apk upgrade
+        register: apk_result
+        retries: "{{ retry_count }}"
+        delay: 3
+        until: apk_result.rc == 0
+        ignore_errors: true
+        when:
+          - glibc_check.stdout is not search("glibc_detected") or alpine_allow_upgrade | bool
+
+      - name: Warn if upgrade failed
+        debug:
+          msg: "⚠️ Alpine upgrade failed (likely Docker/glibc conflict). Manual repair required."
+        when: apk_result is failed
