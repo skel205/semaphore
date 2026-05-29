@@ -1,16 +1,16 @@
 ---
-- name: Universal Linux update (bulletproof)
+- name: Universal Linux update (production safe)
   hosts: ubuntu_vms
   become: true
   gather_facts: true
 
   vars:
-    ansible_ssh_timeout: 120
+    ansible_ssh_timeout: 300
 
   tasks:
 
     # --------------------------------------------
-    # Detect package manager (safe + clean)
+    # Detect package manager (clean + safe)
     # --------------------------------------------
     - name: Detect package manager
       ansible.builtin.raw: |
@@ -20,50 +20,49 @@
       register: pkg_mgr
       changed_when: false
 
-    - name: Normalize package manager value
+    - name: Normalize package manager
       set_fact:
         pkg: "{{ pkg_mgr.stdout | trim }}"
 
-    - name: Debug package manager
+    - name: Show detected OS type
       debug:
-        msg: "Detected package manager = {{ pkg }}"
+        msg: "Package manager detected: {{ pkg }}"
 
     # --------------------------------------------
-    # Fail safely if unsupported
+    # Safety gate
     # --------------------------------------------
     - name: Fail if unsupported OS
       fail:
-        msg: "Unsupported OS (no apt or apk detected)"
+        msg: "Unsupported OS (only apt or apk supported)"
       when: pkg not in ['apt', 'apk']
 
     # ============================================
-    # DEBIAN / UBUNTU PATH
+    # DEBIAN / UBUNTU PATH (SAFE + BLOCKING)
     # ============================================
-    - name: Debian/Ubuntu update block
+    - name: Debian/Ubuntu update
       when: pkg == "apt"
       block:
 
         - name: Update apt cache
           apt:
             update_cache: yes
+            cache_valid_time: 3600
 
-        - name: Upgrade system
+        - name: Upgrade system (safe dist upgrade)
           apt:
             upgrade: dist
             autoremove: yes
             purge: yes
 
     # ============================================
-    # ALPINE PATH (FIXED FOR SSH DROP ISSUE)
+    # ALPINE PATH (SAFE + BLOCKING)
     # ============================================
-    - name: Alpine update block (safe execution)
+    - name: Alpine update
       when: pkg == "apk"
       block:
 
-        - name: Update Alpine packages
+        - name: Update Alpine repositories
           raw: apk update
 
-        # FIX: prevents SSH drop during long upgrades
-        - name: Upgrade Alpine packages (stable)
-          raw: |
-            nohup sh -c "apk upgrade" >/tmp/apk-upgrade.log 2>&1 &
+        - name: Upgrade Alpine system (safe blocking)
+          raw: apk upgrade
