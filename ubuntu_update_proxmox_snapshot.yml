@@ -1,8 +1,8 @@
 ---
 # ====================================================
-# PROXMOX SNAPSHOT TASKS
+# PROXMOX SNAPSHOT + RETENTION
 # ====================================================
-- name: Create Proxmox snapshot + retention
+- name: Proxmox snapshot + retention
   hosts: proxmox
   become: true
 
@@ -18,11 +18,12 @@
         qm snapshot {{ vmid }}
         {{ snapshot_prefix }}-{{ ansible_date_time.date }}-{{ ansible_date_time.time | replace(':','-') }}
 
-    - name: Get snapshots
+    - name: Get snapshot list
       command: qm listsnapshot {{ vmid }}
       register: snap_list
+      changed_when: false
 
-    - name: Parse snapshots
+    - name: Extract snapshot names safely
       set_fact:
         snapshots: >-
           {{
@@ -33,29 +34,50 @@
             | list
           }}
 
-    - name: Delete old snapshots
+    - name: Delete old snapshots (keep last N)
       command: qm delsnapshot {{ vmid }} {{ item }}
       loop: "{{ snapshots[:-keep_snapshots] if snapshots|length > keep_snapshots else [] }}"
 
 
 # ====================================================
-# UBUNTU UPDATE TASKS
+# UNIVERSAL LINUX UPDATE (Ubuntu / Debian / Alpine)
 # ====================================================
-- name: Update Ubuntu VMs
+- name: Update Linux VMs (Ubuntu / Debian / Alpine)
   hosts: ubuntu_vms
   become: true
+  gather_facts: true
 
   tasks:
 
-    - name: Update apt cache
+    - name: Detect package manager
+      ansible.builtin.raw: |
+        if command -v apt-get >/dev/null 2>&1; then echo apt;
+        elif command -v apk >/dev/null 2>&1; then echo apk;
+        else echo unknown; fi
+      register: pkg_mgr
+      changed_when: false
+
+    - name: Fail if unsupported OS
+      fail:
+        msg: "Unsupported OS - no apt or apk found"
+      when: "'unknown' in pkg_mgr.stdout"
+
+    # ----------------------------
+    # Debian / Ubuntu
+    # ----------------------------
+    - name: Update Debian/Ubuntu systems
+      when: "'apt' in pkg_mgr.stdout"
       apt:
         update_cache: yes
-
-    - name: Upgrade system
-      apt:
         upgrade: dist
-
-    - name: Cleanup
-      apt:
         autoremove: yes
         purge: yes
+
+    # ----------------------------
+    # Alpine Linux
+    # ----------------------------
+    - name: Update Alpine systems
+      when: "'apk' in pkg_mgr.stdout"
+      raw: |
+        apk update
+        apk upgrade
