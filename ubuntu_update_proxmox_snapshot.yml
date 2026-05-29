@@ -1,5 +1,5 @@
 ---
-- name: Universal Linux update (safe)
+- name: Universal Linux update (bulletproof)
   hosts: ubuntu_vms
   become: true
   gather_facts: true
@@ -7,7 +7,7 @@
   tasks:
 
     # --------------------------------------------
-    # Detect OS type once
+    # Detect package manager (clean output)
     # --------------------------------------------
     - name: Detect package manager
       ansible.builtin.raw: |
@@ -17,34 +17,46 @@
       register: pkg_mgr
       changed_when: false
 
-    - name: Set package manager fact
+    - name: Normalize package manager value
       set_fact:
         pkg: "{{ pkg_mgr.stdout | trim }}"
+
+    - name: Debug package manager (safe)
+      debug:
+        msg: "Detected package manager = {{ pkg }}"
 
     # --------------------------------------------
     # Fail safely
     # --------------------------------------------
     - name: Fail if unsupported OS
       fail:
-        msg: "Unsupported OS - no apt or apk found"
-      when: pkg == "unknown"
+        msg: "Unsupported OS (no apt or apk detected)"
+      when: pkg != "apt" and pkg != "apk"
 
     # --------------------------------------------
     # Debian / Ubuntu ONLY
     # --------------------------------------------
-    - name: Update Debian/Ubuntu systems
+    - name: Debian/Ubuntu update
       when: pkg == "apt"
-      apt:
-        update_cache: yes
-        upgrade: dist
-        autoremove: yes
-        purge: yes
+      block:
+        - name: Update apt cache
+          apt:
+            update_cache: yes
+
+        - name: Upgrade system
+          apt:
+            upgrade: dist
+            autoremove: yes
+            purge: yes
 
     # --------------------------------------------
-    # Alpine ONLY
+    # Alpine ONLY (safe execution block)
     # --------------------------------------------
-    - name: Update Alpine systems
+    - name: Alpine update
       when: pkg == "apk"
-      raw: |
-        apk update
-        apk upgrade
+      block:
+        - name: Update Alpine packages
+          raw: apk update
+
+        - name: Upgrade Alpine packages
+          raw: apk upgrade
