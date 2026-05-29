@@ -1,22 +1,78 @@
 ---
-- name: Universal Linux update (production safe v2)
-  hosts: ubuntu_vms
+#########################################################
+# PROXMOX SNAPSHOT
+#########################################################
+
+- name: Proxmox snapshot + retention
+  hosts: proxmox
   become: true
   gather_facts: true
 
   vars:
-    ansible_ssh_timeout: 300
+    vmid: 125
+    keep_snapshots: 5
+    snapshot_prefix: "pre-update"
 
   tasks:
 
-    # --------------------------------------------
+    - name: Create snapshot timestamp
+      set_fact:
+        snapshot_name: "{{ snapshot_prefix }}-{{ ansible_date_time.date }}-{{ ansible_date_time.time | replace(':', '-') }}"
+
+    - name: Create VM snapshot
+      command: qm snapshot {{ vmid }} {{ snapshot_name }}
+      register: snapshot_create
+      changed_when: "'snapshot' in snapshot_create.stdout or snapshot_create.rc == 0"
+
+    - name: Get snapshot list
+      command: qm listsnapshot {{ vmid }}
+      register: snapshot_list
+      changed_when: false
+
+    - name: Extract snapshot names safely
+      set_fact:
+        snapshots: >-
+          {{
+            snapshot_list.stdout_lines
+            | select('match', '^[a-zA-Z0-9]')
+            | map('regex_replace', '\s+.*$', '')
+            | reject('equalto', 'current')
+            | list
+          }}
+
+    - name: Delete old snapshots (keep latest N)
+      command: qm delsnapshot {{ vmid }} {{ item }}
+      loop: "{{ snapshots[:-keep_snapshots] if snapshots | length > keep_snapshots else [] }}"
+      ignore_errors: true
+
+#########################################################
+# UNIVERSAL LINUX UPDATES
+#########################################################
+
+- name: Universal Linux update (production safe)
+  hosts: ubuntu_vms
+  become: true
+  gather_facts: true
+  serial: 1
+
+  vars:
+    retry_count: 2
+
+  tasks:
+
+    #####################################################
     # Detect package manager
-    # --------------------------------------------
+    #####################################################
+
     - name: Detect package manager
-      ansible.builtin.raw: |
-        if command -v apt-get >/dev/null 2>&1; then echo apt;
-        elif command -v apk >/dev/null 2>&1; then echo apk;
-        else echo unknown; fi
+      raw: |
+        if command -v apt-get >/dev/null 2>&1; then
+          echo apt;
+        elif command -v apk >/dev/null 2>&1; then
+          echo apk;
+        else
+          echo unknown;
+        fi
       register: pkg_mgr
       changed_when: false
 
@@ -24,22 +80,20 @@
       set_fact:
         pkg: "{{ pkg_mgr.stdout | trim }}"
 
-    - name: Show detected OS type
+    - name: Show detected OS
       debug:
-        msg: "Package manager detected: {{ pkg }}"
+        msg: "Detected package manager = {{ pkg }}"
 
-    # --------------------------------------------
-    # Safety gate
-    # --------------------------------------------
-    - name: Fail if unsupported OS
+    - name: Fail unsupported systems
       fail:
-        msg: "Unsupported OS (only apt or apk supported)"
+        msg: "Unsupported Linux distribution"
       when: pkg not in ['apt', 'apk']
 
-    # ============================================
+    #####################################################
     # DEBIAN / UBUNTU
-    # ============================================
-    - name: Debian/Ubuntu update
+    #####################################################
+
+    - name: Debian / Ubuntu update block
       when: pkg == "apt"
       block:
 
@@ -48,31 +102,66 @@
             update_cache: yes
             cache_valid_time: 3600
 
-        - name: Upgrade system safely
+        - name: Upgrade packages
           apt:
             upgrade: dist
             autoremove: yes
             purge: yes
 
-    # ============================================
-    # ALPINE (FIXED & STABLE)
-    # ============================================
-    - name: Alpine update (safe)
+        - name: Clean package cache
+          apt:
+            autoclean: yes
+
+    #####################################################
+    # ALPINE
+    #####################################################
+
+    - name: Alpine update block
       when: pkg == "apk"
       block:
 
-        - name: Update Alpine repositories
-          shell: apk update
-          args:
-            executable: /bin/sh
+        - name: Check for glibc packages
+          raw: |
+            apk info | grep -E 'glibc|gcompat' || true
+          register: glibc_check
+          changed_when: false
 
-        - name: Upgrade Alpine safely (retry + non-fatal handling)
+        - name: Show Alpine compatibility layer status
+          debug:
+            msg: "{{ glibc_check.stdout_lines | default(['No glibc packages detected']) }}"
+
+        - name: Update Alpine repositories
+          raw: apk update
+
+        - name: Upgrade Alpine packages safely
           shell: |
-            set -e
-            apk upgrade --no-cache --available
-          args:
-            executable: /bin/sh
+            apk upgrade
           register: apk_upgrade
-          retries: 2
+          retries: "{{ retry_count }}"
           delay: 5
           until: apk_upgrade.rc == 0
+
+    #####################################################
+    # REBOOT DETECTION
+    #####################################################
+
+    - name: Check if reboot required (Debian/Ubuntu)
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+      when: pkg == "apt"
+
+    - name: Notify reboot required
+      debug:
+        msg: "Reboot required on {{ inventory_hostname }}"
+      when:
+        - pkg == "apt"
+        - reboot_required.stat.exists | default(false)
+
+    #####################################################
+    # FINAL STATUS
+    #####################################################
+
+    - name: Final success message
+      debug:
+        msg: "Update completed successfully on {{ inventory_hostname }}"
