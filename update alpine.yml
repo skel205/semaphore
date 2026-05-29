@@ -1,4 +1,4 @@
-- name: Update Alpine server
+- name: Update Alpine server (manual-style output)
   hosts: all
   become: yes
 
@@ -6,25 +6,28 @@
     - name: Update apk package index
       ansible.builtin.command: apk update
       register: apk_update
-      changed_when: "'fetch' in apk_update.stdout"
+      changed_when: false
 
-    - name: List upgradable packages (before upgrade)
+    - name: Show apk update output
+      ansible.builtin.debug:
+        msg: "{{ apk_update.stdout_lines }}"
+
+    - name: List upgradable packages
       ansible.builtin.command: apk list -u
-      register: upgradable_before
+      register: upgradable
       changed_when: false
       failed_when: false
 
-    - name: Show upgradable packages (before)
+    - name: Show upgradable packages
       ansible.builtin.debug:
-        msg: "{{ upgradable_before.stdout_lines | default(['No packages upgradable']) }}"
+        msg: "{{ upgradable.stdout_lines | default(['No upgradable packages']) }}"
 
-    - name: Upgrade all packages and show what's updated
+    - name: Run full upgrade (manual output)
       ansible.builtin.command: apk upgrade --available
-      register: upgrade_output
-      changed_when: >
-        upgrade_output.stdout is search('Upgrading|Installing|Upgraded')
-      failed_when: upgrade_output.rc not in [0, 1]
+      register: upgrade
+      changed_when: false
+      failed_when: false   # IMPORTANT: don't hide output, don't fail on rc=1
 
-    - name: Show upgraded packages
+    - name: Show upgrade output (raw)
       ansible.builtin.debug:
-        msg: "{{ upgrade_output.stdout_lines | default([]) }}"
+        msg: "{{ upgrade.stdout_lines }}"
