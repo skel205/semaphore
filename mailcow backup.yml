@@ -1,8 +1,17 @@
-- name: Run Mailcow backup (safe execution)
-  command: /opt/mailcow-dockerized/helper-scripts/backup_and_restore.sh backup all
-  args:
-    chdir: /opt/mailcow-dockerized
-  register: backup_result
-  async: 1800
-  poll: 5
-  changed_when: true
+---
+- name: Backup and Update Mailcow Dockerized
+  hosts: mailcow
+  become: true
+
+  tasks:
+
+    - name: Run Mailcow backup (safe execution)
+      command: /opt/mailcow-dockerized/helper-scripts/backup_and_restore.sh backup all
+      args:
+        chdir: /opt/mailcow-dockerized
+      register: backup_result
+      changed_when: true
+
+    - name: Show backup output
+      debug:
+        var: backup_result.stdout_lines
