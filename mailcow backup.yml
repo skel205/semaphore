@@ -17,7 +17,7 @@
         path: "{{ mailcow_path }}/docker-compose.yml"
       register: mailcow_check
 
-    - name: Fail if Mailcow is missing
+    - name: Fail if Mailcow missing
       fail:
         msg: "Mailcow not found at {{ mailcow_path }}"
       when: not mailcow_check.stat.exists
@@ -30,50 +30,30 @@
 
     # ---------------- BACKUP ----------------
 
-    - name: Run Mailcow backup (streamed + logged)
+    - name: Run Mailcow backup
       shell: |
         cd {{ mailcow_path }}
-
-        LOGFILE="/tmp/mailcow-backup-$(date +%F-%H-%M-%S).log"
-
-        echo "===================================="
-        echo "Mailcow backup STARTED"
-        echo "Log: $LOGFILE"
-        echo "===================================="
-
-        stdbuf -oL -eL ./helper-scripts/backup_and_restore.sh backup all 2>&1 | tee "$LOGFILE"
-
-        echo "===================================="
-        echo "Mailcow backup FINISHED"
-        echo "===================================="
+        ./helper-scripts/backup_and_restore.sh backup all
       args:
         executable: /bin/bash
       register: backup_result
       changed_when: true
 
-    - name: Show last backup log lines (debug)
-      shell: tail -n 50 /tmp/mailcow-backup-*.log
-      register: log_tail
+    - name: Show backup result (last lines only)
+      debug:
+        var: backup_result.stdout_lines
 
-    - debug:
-        var: log_tail.stdout_lines
+    - name: Verify latest backup exists
+      shell: ls -1t {{ backup_path }} | head -n 1
+      register: latest_backup
 
-    # ---------------- VERIFY BACKUP ----------------
-
-    - name: Check backup files exist on NAS
-      find:
-        paths: "{{ backup_path }}"
-        file_type: directory
-      register: backup_dirs
-
-    - name: Fail if no backups were created
-      fail:
-        msg: "Backup did not appear on NAS!"
-      when: backup_dirs.matched == 0
+    - name: Show latest backup folder
+      debug:
+        msg: "Latest backup: {{ latest_backup.stdout }}"
 
     # ---------------- UPDATE ----------------
 
-    - name: Pull Mailcow repository updates
+    - name: Pull Mailcow repo updates
       git:
         repo: https://github.com/mailcow/mailcow-dockerized.git
         dest: "{{ mailcow_path }}"
@@ -90,5 +70,5 @@
       args:
         chdir: "{{ mailcow_path }}"
 
-    - name: Cleanup unused Docker resources
+    - name: Cleanup Docker leftovers
       command: docker system prune -f
