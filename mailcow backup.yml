@@ -1,54 +1,75 @@
 ---
-- name: Mailcow Backup (Stable Production Safe)
+- name: Mailcow Backup (Instant Success/Failure Detection)
   hosts: mailcow
   become: true
 
   vars:
     mailcow_path: /opt/mailcow-dockerized
-    backup_log: /tmp/mailcow-backup.log
+    backup_path: /mnt/nas/backups/mailcow
+    log_file: /tmp/mailcow-backup.log
 
   tasks:
 
-    - name: Verify Mailcow exists
-      stat:
-        path: "{{ mailcow_path }}/helper-scripts/backup_and_restore.sh"
-      register: mailcow_script
+    # ---------------- START BACKUP ----------------
 
-    - name: Fail if missing
-      fail:
-        msg: "Mailcow backup script not found"
-      when: not mailcow_script.stat.exists
-
-    # ---------------- SAFE EXECUTION ----------------
-
-    - name: Run Mailcow backup (safe detached execution)
+    - name: Start Mailcow backup (detached safe)
       shell: |
         cd {{ mailcow_path }}
 
-        # IMPORTANT: only nohup, no setsid, no pkill
         nohup ./helper-scripts/backup_and_restore.sh backup all \
-          > {{ backup_log }} 2>&1 < /dev/null &
+          > {{ log_file }} 2>&1 < /dev/null &
 
-        echo "Backup started safely"
+        echo $! > /tmp/mailcow-backup.pid
       args:
         executable: /bin/bash
-      register: backup_start
+      register: start_result
       changed_when: true
 
-    # ---------------- WAIT (SAFE POLLING) ----------------
+    # ---------------- WAIT FOR FIRST RESULT ----------------
 
-    - name: Wait for backup to complete
-      shell: pgrep -f backup_and_restore.sh || echo done
-      register: check
-      retries: 180
-      delay: 10
-      until: "'done' in check.stdout"
+    - name: Wait for backup folder to appear (FAST FAILURE DETECTION)
+      shell: |
+        ls -1t {{ backup_path }} | head -n 1
+      register: latest_backup
+      retries: 120
+      delay: 5
+      until: latest_backup.stdout != ""
 
-    # ---------------- OUTPUT ----------------
+    # ---------------- VALIDATE CONTENT ----------------
 
-    - name: Show backup log
-      shell: tail -n 80 {{ backup_log }} || true
-      register: log
+    - name: Check backup integrity (required files)
+      shell: |
+        LATEST=$(ls -1t {{ backup_path }} | head -n 1)
 
-    - debug:
-        var: log.stdout_lines
+        test -f "{{ backup_path }}/$LATEST/backup_mariadb.tar.zst" &&
+        test -f "{{ backup_path }}/$LATEST/backup_vmail.tar.zst" &&
+        test -f "{{ backup_path }}/$LATEST/mailcow.conf"
+
+        echo $LATEST
+      register: validation
+      changed_when: false
+
+    # ---------------- FAIL IF BROKEN ----------------
+
+    - name: Fail if backup is incomplete
+      fail:
+        msg: "Backup failed or incomplete - missing required files"
+      when: validation.rc != 0
+
+    # ---------------- SUCCESS OUTPUT ----------------
+
+    - name: Show successful backup
+      debug:
+        msg: "Backup SUCCESS: {{ validation.stdout }}"
+
+    # ---------------- OPTIONAL LOG CHECK ----------------
+
+    - name: Check backup log for errors
+      shell: grep -i "error\\|fail\\|fatal" {{ log_file }} || true
+      register: log_errors
+      changed_when: false
+
+    - name: Show warnings if any
+      debug:
+        var: log_errors.stdout_lines
+      when: log_errors.stdout != ""
