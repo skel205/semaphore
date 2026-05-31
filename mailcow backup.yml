@@ -1,1 +1,61 @@
+---
+- name: Mailcow Backup Playbook
+  hosts: mailcow
+  become: yes
+  gather_facts: yes
 
+  vars:
+    mailcow_path: /opt/mailcow-dockerized
+    backup_path: /opt/mailcow-dockerized/data/backup
+    retention_days: 7
+
+  tasks:
+
+    - name: Ensure Mailcow directory exists
+      stat:
+        path: "{{ mailcow_path }}"
+      register: mailcow_dir
+
+    - name: Fail if Mailcow is not installed in expected path
+      fail:
+        msg: "Mailcow directory not found at {{ mailcow_path }}"
+      when: not mailcow_dir.stat.exists
+
+    - name: Run Mailcow backup (all data)
+      command: ./helper-scripts/backup_and_restore.sh backup all
+      args:
+        chdir: "{{ mailcow_path }}"
+
+    - name: Check backup directory exists
+      stat:
+        path: "{{ backup_path }}"
+      register: backup_dir
+
+    - name: Fail if backup directory missing
+      fail:
+        msg: "Backup directory not found at {{ backup_path }}"
+      when: not backup_dir.stat.exists
+
+    - name: List backups
+      find:
+        paths: "{{ backup_path }}"
+        patterns: "*.tar.gz"
+      register: backups
+
+    - name: Show created backups
+      debug:
+        msg: "{{ backups.files | map(attribute='path') | list }}"
+
+    - name: Remove old backups (retention policy)
+      find:
+        paths: "{{ backup_path }}"
+        age: "{{ retention_days }}d"
+        patterns: "*.tar.gz"
+      register: old_backups
+
+    - name: Delete old backups
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_backups.files }}"
+      when: old_backups.matched > 0
