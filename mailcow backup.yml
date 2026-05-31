@@ -1,8 +1,39 @@
-- name: Run Mailcow backup (NON-interactive fixed)
-  shell: |
-    cd /opt/mailcow-dockerized
-    ./helper-scripts/backup_and_restore.sh backup all /mnt/nas/backups/mailcow
-  args:
-    executable: /bin/bash
-  register: backup_result
-  changed_when: true
+---
+- name: Mailcow Backup and Update
+  hosts: mailcow
+  become: true
+
+  vars:
+    mailcow_path: /opt/mailcow-dockerized
+    backup_path: /mnt/nas/backups/mailcow
+
+  tasks:
+
+    - name: Ensure Mailcow exists
+      stat:
+        path: "{{ mailcow_path }}/docker-compose.yml"
+      register: mailcow_check
+
+    - name: Fail if Mailcow missing
+      fail:
+        msg: "Mailcow not found"
+      when: not mailcow_check.stat.exists
+
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_path }}"
+        state: directory
+        mode: "0775"
+
+    - name: Run Mailcow backup (NON-interactive fixed)
+      shell: |
+        cd {{ mailcow_path }}
+        ./helper-scripts/backup_and_restore.sh backup all {{ backup_path }}
+      args:
+        executable: /bin/bash
+      register: backup_result
+      changed_when: true
+
+    - name: Show backup output
+      debug:
+        var: backup_result.stdout_lines
