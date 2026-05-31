@@ -1,5 +1,5 @@
 ---
-- name: Mailcow Backup (Bulletproof Non-Interactive)
+- name: Mailcow Backup (Stable Production Safe)
   hosts: mailcow
   become: true
 
@@ -16,52 +16,39 @@
 
     - name: Fail if missing
       fail:
-        msg: "Mailcow backup script not found at {{ mailcow_path }}"
+        msg: "Mailcow backup script not found"
       when: not mailcow_script.stat.exists
 
-    # ---------------- SAFE EXECUTION CORE ----------------
+    # ---------------- SAFE EXECUTION ----------------
 
-    - name: Run Mailcow backup (fully detached + no TTY issues)
+    - name: Run Mailcow backup (safe detached execution)
       shell: |
         cd {{ mailcow_path }}
 
-        # Kill any accidental stale backups first (prevents locks/hangs)
-        pkill -f backup_and_restore.sh || true
-
-        # Fully isolated execution:
-        # - nohup prevents SSH hang
-        # - setsid breaks session attachment
-        # - stdout redirected so Ansible never blocks
-        nohup setsid ./helper-scripts/backup_and_restore.sh backup all \
+        # IMPORTANT: only nohup, no setsid, no pkill
+        nohup ./helper-scripts/backup_and_restore.sh backup all \
           > {{ backup_log }} 2>&1 < /dev/null &
 
-        echo "Backup started in background"
+        echo "Backup started safely"
       args:
         executable: /bin/bash
       register: backup_start
       changed_when: true
 
-    # ---------------- WAIT FOR COMPLETION ----------------
+    # ---------------- WAIT (SAFE POLLING) ----------------
 
-    - name: Wait for Mailcow backup to finish
-      shell: pgrep -f "backup_and_restore.sh" || echo "done"
-      register: backup_check
+    - name: Wait for backup to complete
+      shell: pgrep -f backup_and_restore.sh || echo done
+      register: check
       retries: 180
       delay: 10
-      until: "'done' in backup_check.stdout"
+      until: "'done' in check.stdout"
 
-    # ---------------- FINAL STATUS ----------------
+    # ---------------- OUTPUT ----------------
 
-    - name: Show backup log tail
+    - name: Show backup log
       shell: tail -n 80 {{ backup_log }} || true
-      register: log_tail
+      register: log
 
     - debug:
-        var: log_tail.stdout_lines
-
-    - name: Confirm backup folder exists
-      shell: ls -1t /mnt/nas/backups/mailcow | head -n 1
-      register: latest_backup
-
-    - debug:
-        msg: "Latest backup: {{ latest_backup.stdout }}"
+        var: log.stdout_lines
