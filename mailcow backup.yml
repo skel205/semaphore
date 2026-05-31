@@ -10,6 +10,8 @@
 
   tasks:
 
+    # ---------------- CHECK ----------------
+
     - name: Ensure Mailcow exists
       stat:
         path: "{{ mailcow_path }}/docker-compose.yml"
@@ -20,18 +22,39 @@
         msg: "Mailcow not found at {{ mailcow_path }}"
       when: not mailcow_check.stat.exists
 
-    - name: Ensure backup directory exists on NAS
+    - name: Ensure backup directory exists
       file:
         path: "{{ backup_path }}"
         state: directory
-        mode: "0750"
+        mode: "0775"
 
-    - name: Run Mailcow backup to NAS
-      command: ./helper-scripts/backup_and_restore.sh backup all "{{ backup_path }}"
+    # ---------------- BACKUP ----------------
+
+    - name: Run Mailcow backup (working command)
+      command: ./helper-scripts/backup_and_restore.sh backup all
       args:
         chdir: "{{ mailcow_path }}"
+      register: backup_result
+      changed_when: true
 
-    - name: Pull latest Mailcow repo updates (if git-managed)
+    - name: Show backup output (for Semaphore logs)
+      debug:
+        var: backup_result.stdout_lines
+
+    - name: Verify backup was created on NAS
+      find:
+        paths: "{{ backup_path }}"
+        file_type: directory
+      register: backup_files
+
+    - name: Fail if no backups found
+      fail:
+        msg: "Backup failed or not written to NAS!"
+      when: backup_files.matched == 0
+
+    # ---------------- UPDATE ----------------
+
+    - name: Pull latest Mailcow repository updates
       git:
         repo: https://github.com/mailcow/mailcow-dockerized.git
         dest: "{{ mailcow_path }}"
@@ -43,70 +66,10 @@
       args:
         chdir: "{{ mailcow_path }}"
 
-    - name: Recreate containers
+    - name: Restart Mailcow containers
       command: "{{ compose_cmd }} up -d"
       args:
         chdir: "{{ mailcow_path }}"
 
     - name: Cleanup unused Docker resources
-      command: docker system prune -f---
-- name: Mailcow Backup Playbook
-  hosts: mailcow
-  become: yes
-  gather_facts: yes
-
-  vars:
-    mailcow_path: /opt/mailcow-dockerized
-    backup_path: /opt/mailcow-dockerized/data/backup
-    retention_days: 7
-
-  tasks:
-
-    - name: Ensure Mailcow directory exists
-      stat:
-        path: "{{ mailcow_path }}"
-      register: mailcow_dir
-
-    - name: Fail if Mailcow is not installed in expected path
-      fail:
-        msg: "Mailcow directory not found at {{ mailcow_path }}"
-      when: not mailcow_dir.stat.exists
-
-    - name: Run Mailcow backup (all data)
-      command: ./helper-scripts/backup_and_restore.sh backup all
-      args:
-        chdir: "{{ mailcow_path }}"
-
-    - name: Check backup directory exists
-      stat:
-        path: "{{ backup_path }}"
-      register: backup_dir
-
-    - name: Fail if backup directory missing
-      fail:
-        msg: "Backup directory not found at {{ backup_path }}"
-      when: not backup_dir.stat.exists
-
-    - name: List backups
-      find:
-        paths: "{{ backup_path }}"
-        patterns: "*.tar.gz"
-      register: backups
-
-    - name: Show created backups
-      debug:
-        msg: "{{ backups.files | map(attribute='path') | list }}"
-
-    - name: Remove old backups (retention policy)
-      find:
-        paths: "{{ backup_path }}"
-        age: "{{ retention_days }}d"
-        patterns: "*.tar.gz"
-      register: old_backups
-
-    - name: Delete old backups
-      file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ old_backups.files }}"
-      when: old_backups.matched > 0
+      command: docker system prune -f
