@@ -1,4 +1,40 @@
 ---
+- name: Mailcow Backup (Stable Non-Interactive)
+  hosts: mailcow
+  become: true
+
+  vars:
+    mailcow_path: /opt/mailcow-dockerized
+
+  tasks:
+
+    - name: Verify Mailcow backup script exists
+      stat:
+        path: "{{ mailcow_path }}/helper-scripts/backup_and_restore.sh"
+      register: mailcow_script
+
+    - name: Fail if missing
+      fail:
+        msg: "Mailcow backup script not found"
+      when: not mailcow_script.stat.exists
+
+    - name: Run Mailcow backup (non-interactive safe execution)
+      shell: |
+        cd {{ mailcow_path }}
+
+        export DEBIAN_FRONTEND=noninteractive
+        export NEEDRESTART_MODE=a
+
+        # IMPORTANT: prevents SSH/TTY blocking issues
+        stdbuf -oL -eL ./helper-scripts/backup_and_restore.sh backup all
+      args:
+        executable: /bin/bash
+      register: backup_result
+      changed_when: true
+
+    - name: Show output
+      debug:
+        var: backup_result.stdout_lines---
 - name: Mailcow Backup (Simple & Reliable)
   hosts: mailcow
   become: true
