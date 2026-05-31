@@ -1,66 +1,67 @@
 ---
-- name: Mailcow Backup (Stable Non-Interactive)
+- name: Mailcow Backup (Bulletproof Non-Interactive)
   hosts: mailcow
   become: true
 
   vars:
     mailcow_path: /opt/mailcow-dockerized
+    backup_log: /tmp/mailcow-backup.log
 
   tasks:
 
-    - name: Verify Mailcow backup script exists
+    - name: Verify Mailcow exists
       stat:
         path: "{{ mailcow_path }}/helper-scripts/backup_and_restore.sh"
       register: mailcow_script
 
     - name: Fail if missing
       fail:
-        msg: "Mailcow backup script not found"
+        msg: "Mailcow backup script not found at {{ mailcow_path }}"
       when: not mailcow_script.stat.exists
 
-    - name: Run Mailcow backup (non-interactive safe execution)
+    # ---------------- SAFE EXECUTION CORE ----------------
+
+    - name: Run Mailcow backup (fully detached + no TTY issues)
       shell: |
         cd {{ mailcow_path }}
 
-        export DEBIAN_FRONTEND=noninteractive
-        export NEEDRESTART_MODE=a
+        # Kill any accidental stale backups first (prevents locks/hangs)
+        pkill -f backup_and_restore.sh || true
 
-        # IMPORTANT: prevents SSH/TTY blocking issues
-        stdbuf -oL -eL ./helper-scripts/backup_and_restore.sh backup all
+        # Fully isolated execution:
+        # - nohup prevents SSH hang
+        # - setsid breaks session attachment
+        # - stdout redirected so Ansible never blocks
+        nohup setsid ./helper-scripts/backup_and_restore.sh backup all \
+          > {{ backup_log }} 2>&1 < /dev/null &
+
+        echo "Backup started in background"
       args:
         executable: /bin/bash
-      register: backup_result
+      register: backup_start
       changed_when: true
 
-    - name: Show output
-      debug:
-        var: backup_result.stdout_lines---
-- name: Mailcow Backup (Simple & Reliable)
-  hosts: mailcow
-  become: true
+    # ---------------- WAIT FOR COMPLETION ----------------
 
-  vars:
-    mailcow_path: /opt/mailcow-dockerized
+    - name: Wait for Mailcow backup to finish
+      shell: pgrep -f "backup_and_restore.sh" || echo "done"
+      register: backup_check
+      retries: 180
+      delay: 10
+      until: "'done' in backup_check.stdout"
 
-  tasks:
+    # ---------------- FINAL STATUS ----------------
 
-    - name: Check Mailcow exists
-      stat:
-        path: "{{ mailcow_path }}/helper-scripts/backup_and_restore.sh"
-      register: mailcow_script
+    - name: Show backup log tail
+      shell: tail -n 80 {{ backup_log }} || true
+      register: log_tail
 
-    - name: Fail if Mailcow missing
-      fail:
-        msg: "Mailcow backup script not found"
-      when: not mailcow_script.stat.exists
+    - debug:
+        var: log_tail.stdout_lines
 
-    - name: Run Mailcow backup (same as manual working command)
-      command: ./helper-scripts/backup_and_restore.sh backup all
-      args:
-        chdir: "{{ mailcow_path }}"
-      register: backup_result
-      changed_when: true
+    - name: Confirm backup folder exists
+      shell: ls -1t /mnt/nas/backups/mailcow | head -n 1
+      register: latest_backup
 
-    - name: Show backup output
-      debug:
-        var: backup_result.stdout_lines
+    - debug:
+        msg: "Latest backup: {{ latest_backup.stdout }}"
