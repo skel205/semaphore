@@ -1,17 +1,88 @@
 ---
-- name: Backup and Update Mailcow Dockerized
+- name: Mailcow Backup and Update (Stable)
   hosts: mailcow
   become: true
 
+  vars:
+    mailcow_path: /opt/mailcow-dockerized
+    backup_path: /mnt/nas/backups/mailcow
+
   tasks:
 
-    - name: Run Mailcow backup (safe execution)
-      command: /opt/mailcow-dockerized/helper-scripts/backup_and_restore.sh backup all
+    # ---------------- PRECHECK ----------------
+
+    - name: Ensure Mailcow exists
+      stat:
+        path: "{{ mailcow_path }}/docker-compose.yml"
+      register: mailcow_check
+
+    - name: Fail if Mailcow missing
+      fail:
+        msg: "Mailcow not found at {{ mailcow_path }}"
+      when: not mailcow_check.stat.exists
+
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_path }}"
+        state: directory
+        mode: "0775"
+
+    # ---------------- BACKUP (SAFE EXECUTION) ----------------
+
+    - name: Run Mailcow backup (NO hanging / NO PTY issues)
+      shell: |
+        cd {{ mailcow_path }}
+
+        echo "=== Mailcow backup START ==="
+
+        # critical: prevents T-state / SSH suspension issues
+        setsid ./helper-scripts/backup_and_restore.sh backup all \
+          > /tmp/mailcow-backup.log 2>&1
+
+        echo "=== Mailcow backup FINISH TRIGGERED ==="
       args:
-        chdir: /opt/mailcow-dockerized
+        executable: /bin/bash
       register: backup_result
       changed_when: true
 
-    - name: Show backup output
-      debug:
-        var: backup_result.stdout_lines
+    # ---------------- VERIFY ----------------
+
+    - name: Show last backup log lines
+      shell: tail -n 50 /tmp/mailcow-backup.log || true
+      register: log_tail
+
+    - debug:
+        var: log_tail.stdout_lines
+
+    - name: Check backup folder exists on NAS
+      find:
+        paths: "{{ backup_path }}"
+        file_type: directory
+      register: backup_dirs
+
+    - name: Fail if backup not created
+      fail:
+        msg: "No backup detected on NAS"
+      when: backup_dirs.matched == 0
+
+    # ---------------- UPDATE ----------------
+
+    - name: Pull Mailcow updates
+      git:
+        repo: https://github.com/mailcow/mailcow-dockerized.git
+        dest: "{{ mailcow_path }}"
+        update: yes
+        force: no
+
+    - name: Pull Docker images
+      command: docker compose pull
+      args:
+        chdir: "{{ mailcow_path }}"
+
+    - name: Restart Mailcow
+      command: docker compose up -d
+      args:
+        chdir: "{{ mailcow_path }}"
+
+    - name: Cleanup Docker
+      command: docker system prune -f
