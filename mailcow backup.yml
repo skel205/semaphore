@@ -1,74 +1,8 @@
----
-- name: Backup and Update Mailcow Dockerized
-  hosts: mailcow
-  become: true
-
-  vars:
-    mailcow_path: /opt/mailcow-dockerized
-    backup_path: /mnt/nas/backups/mailcow
-    compose_cmd: "docker compose"
-
-  tasks:
-
-    # ---------------- PRECHECK ----------------
-
-    - name: Ensure Mailcow exists
-      stat:
-        path: "{{ mailcow_path }}/docker-compose.yml"
-      register: mailcow_check
-
-    - name: Fail if Mailcow missing
-      fail:
-        msg: "Mailcow not found at {{ mailcow_path }}"
-      when: not mailcow_check.stat.exists
-
-    - name: Ensure backup directory exists
-      file:
-        path: "{{ backup_path }}"
-        state: directory
-        mode: "0775"
-
-    # ---------------- BACKUP ----------------
-
-    - name: Run Mailcow backup
-      shell: |
-        cd {{ mailcow_path }}
-        ./helper-scripts/backup_and_restore.sh backup all
-      args:
-        executable: /bin/bash
-      register: backup_result
-      changed_when: true
-
-    - name: Show backup result (last lines only)
-      debug:
-        var: backup_result.stdout_lines
-
-    - name: Verify latest backup exists
-      shell: ls -1t {{ backup_path }} | head -n 1
-      register: latest_backup
-
-    - name: Show latest backup folder
-      debug:
-        msg: "Latest backup: {{ latest_backup.stdout }}"
-
-    # ---------------- UPDATE ----------------
-
-    - name: Pull Mailcow repo updates
-      git:
-        repo: https://github.com/mailcow/mailcow-dockerized.git
-        dest: "{{ mailcow_path }}"
-        update: yes
-        force: no
-
-    - name: Pull Docker images
-      command: "{{ compose_cmd }} pull"
-      args:
-        chdir: "{{ mailcow_path }}"
-
-    - name: Restart Mailcow containers
-      command: "{{ compose_cmd }} up -d"
-      args:
-        chdir: "{{ mailcow_path }}"
-
-    - name: Cleanup Docker leftovers
-      command: docker system prune -f
+- name: Run Mailcow backup (safe execution)
+  command: /opt/mailcow-dockerized/helper-scripts/backup_and_restore.sh backup all
+  args:
+    chdir: /opt/mailcow-dockerized
+  register: backup_result
+  async: 1800
+  poll: 5
+  changed_when: true
