@@ -1,4 +1,55 @@
 ---
+- name: Backup and Update Mailcow Dockerized
+  hosts: mailcow
+  become: true
+
+  vars:
+    mailcow_path: /opt/mailcow-dockerized
+    backup_path: /mnt/nas/backups/mailcow
+    compose_cmd: "docker compose"
+
+  tasks:
+
+    - name: Ensure Mailcow exists
+      stat:
+        path: "{{ mailcow_path }}/docker-compose.yml"
+      register: mailcow_check
+
+    - name: Fail if Mailcow is missing
+      fail:
+        msg: "Mailcow not found at {{ mailcow_path }}"
+      when: not mailcow_check.stat.exists
+
+    - name: Ensure backup directory exists on NAS
+      file:
+        path: "{{ backup_path }}"
+        state: directory
+        mode: "0750"
+
+    - name: Run Mailcow backup to NAS
+      command: ./helper-scripts/backup_and_restore.sh backup all "{{ backup_path }}"
+      args:
+        chdir: "{{ mailcow_path }}"
+
+    - name: Pull latest Mailcow repo updates (if git-managed)
+      git:
+        repo: https://github.com/mailcow/mailcow-dockerized.git
+        dest: "{{ mailcow_path }}"
+        update: yes
+        force: no
+
+    - name: Pull latest Docker images
+      command: "{{ compose_cmd }} pull"
+      args:
+        chdir: "{{ mailcow_path }}"
+
+    - name: Recreate containers
+      command: "{{ compose_cmd }} up -d"
+      args:
+        chdir: "{{ mailcow_path }}"
+
+    - name: Cleanup unused Docker resources
+      command: docker system prune -f---
 - name: Mailcow Backup Playbook
   hosts: mailcow
   become: yes
